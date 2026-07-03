@@ -8,6 +8,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 |--------|----------|--------------|
 | **Docker Compose** | Quick setup, all-in-one | Not needed (auto-setup) |
 | **Binary Install** | Production servers, systemd | Web-based wizard |
+| **Source Install** | Patched fork/branch, custom builds | Web-based wizard |
 
 ## Files
 
@@ -19,6 +20,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `.env.example` | Docker environment variables template |
 | `DOCKER.md` | Docker Hub documentation |
 | `install.sh` | One-click binary installation script |
+| `install-from-source.sh` | Build current source/fork and install it as a systemd service |
 | `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
 | `sub2api.service` | Systemd service unit file |
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
@@ -246,6 +248,56 @@ docker compose -f docker-compose.local.yml up -d
 ```
 
 Your entire deployment (configuration + data) is migrated!
+
+---
+
+## Source Deployment For Patched Builds
+
+Use `install-from-source.sh` when you need to deploy a local patch or fork
+before it is available in the official release image/binary.
+
+Prerequisites on the server:
+
+- PostgreSQL 15+
+- Redis 7+
+- Git
+- Node.js 18+
+- pnpm 9, or Corepack/npm so the script can install it
+- Go 1.26.4+
+
+Deploy from a fork or branch:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/<you>/<repo>/<branch>/deploy/install-from-source.sh -o install-from-source.sh
+sudo bash install-from-source.sh \
+  --repo https://github.com/<you>/<repo>.git \
+  --branch <branch> \
+  --port 8080
+```
+
+Deploy from an existing checkout on the server:
+
+```bash
+git clone https://github.com/<you>/<repo>.git /opt/sub2api-src
+cd /opt/sub2api-src
+sudo bash deploy/install-from-source.sh --port 8080
+```
+
+The script builds the frontend, builds the backend with `-tags embed`, installs
+the binary to `/opt/sub2api/sub2api`, creates the `sub2api` system user, writes
+`/etc/systemd/system/sub2api.service`, and starts/enables the service.
+
+On first deployment, do not pre-create `config.yaml` unless you already have an
+admin user. Open `http://<server-ip>:8080` and complete the setup wizard so it
+can write config and create the initial admin account.
+
+Common commands:
+
+```bash
+sudo systemctl status sub2api
+sudo journalctl -u sub2api -f
+sudo systemctl restart sub2api
+```
 
 ---
 

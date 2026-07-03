@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T) {
@@ -301,9 +303,29 @@ func TestResolveCodexImportExpiryForNoRefreshTokenUsesEarlierRequestExpiry(t *te
 func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	keys := buildCodexIdentityKeys("acct-1", "user-1", "same@example.com", "token")
 	for _, key := range keys {
+		if key == "account:acct-1" {
+			t.Fatalf("user identity should take precedence over shared account id: %v", keys)
+		}
 		if strings.HasPrefix(key, "email:") {
 			t.Fatalf("strong identity should not include email fallback: %v", keys)
 		}
+	}
+	if len(keys) == 0 || keys[0] != "user:user-1" {
+		t.Fatalf("first identity key = %v, want user:user-1", keys)
+	}
+
+	keys = buildCodexIdentityKeys("acct-1", "", "same@example.com", "token")
+	hasAccount := false
+	for _, key := range keys {
+		if key == "account:acct-1" {
+			hasAccount = true
+		}
+		if strings.HasPrefix(key, "email:") {
+			t.Fatalf("account identity should not include email fallback: %v", keys)
+		}
+	}
+	if !hasAccount {
+		t.Fatalf("missing account fallback identity: %v", keys)
 	}
 
 	keys = buildCodexIdentityKeys("", "", "same@example.com", "token")
@@ -315,6 +337,48 @@ func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	}
 	if !hasEmail {
 		t.Fatalf("weak identity should include email fallback: %v", keys)
+	}
+}
+
+func TestCodexAccountIndexDoesNotMatchSharedTeamAccountWhenUserDiffers(t *testing.T) {
+	index := buildCodexAccountIndex([]service.Account{
+		{
+			ID: 1,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "team-account",
+				"chatgpt_user_id":    "team-user-a",
+				"access_token":       "token-a",
+			},
+		},
+	})
+
+	keys := buildCodexIdentityKeys("team-account", "team-user-b", "b@example.com", "token-b")
+	if existing := index.Find(keys); existing != nil {
+		t.Fatalf("matched account %d for different team user with shared account id", existing.ID)
+	}
+
+	keys = buildCodexIdentityKeys("team-account", "team-user-a", "a@example.com", "token-a2")
+	existing := index.Find(keys)
+	if existing == nil || existing.ID != 1 {
+		t.Fatalf("existing account = %v, want account 1", existing)
+	}
+}
+
+func TestCodexBatchDuplicateCheckDoesNotCollapseSharedTeamAccountWhenUserDiffers(t *testing.T) {
+	seen := map[string]int{}
+	firstKeys := buildCodexIdentityKeys("team-account", "team-user-a", "a@example.com", "token-a")
+	markCodexIdentitySeen(seen, firstKeys, 1)
+
+	secondKeys := buildCodexIdentityKeys("team-account", "team-user-b", "b@example.com", "token-b")
+	if duplicateIndex, ok := firstSeenCodexIdentity(seen, secondKeys); ok {
+		t.Fatalf("shared account id should not duplicate different team user, duplicate index %d", duplicateIndex)
+	}
+
+	fallbackKeys := buildCodexIdentityKeys("team-account", "", "fallback@example.com", "token-c")
+	markCodexIdentitySeen(seen, fallbackKeys, 3)
+	duplicateFallbackKeys := buildCodexIdentityKeys("team-account", "", "other@example.com", "token-d")
+	if duplicateIndex, ok := firstSeenCodexIdentity(seen, duplicateFallbackKeys); !ok || duplicateIndex != 3 {
+		t.Fatalf("account fallback duplicate = (%d, %v), want (3, true)", duplicateIndex, ok)
 	}
 }
 
